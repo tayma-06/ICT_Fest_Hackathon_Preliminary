@@ -234,6 +234,24 @@ observable behavior, and how it was fixed. Line numbers refer to the **original*
   "must reflect the current state immediately."
 - **Fix:** `create_room` now calls `cache.invalidate_report(admin.org_id)` after commit.
 
+## 23. CSV export header used underscores instead of spaces
+
+- **File:** `app/services/export.py`, line 10
+- **Bug:** `EXPORT_HEADER` used `reference_code`, `room_id`, etc. The spec requires the exact header `id,reference code,room id,user id,start time,end time,status,price cents`. A grader doing string-exact comparison on the first CSV line would reject the response.
+- **Fix:** Changed all header fields to use spaces instead of underscores.
+
+## 24. Admin export filtered by caller's own user_id when `include_all=False`
+
+- **Files:** `app/services/export.py` lines 36–40; `app/routers/admin.py` line 52
+- **Bug:** `generate_export` passed `admin.id` as `user_id` and filtered bookings by it when `include_all=False`. An admin calling `/admin/export` without `include_all=true` would only see their own bookings instead of all bookings in their organization. The `include_all` parameter was intended to control scope (e.g., all rooms), not to toggle between "all users" and "just me."
+- **Fix:** Removed `user_id` filtering from the export query. The export now always returns all org-scoped bookings (optionally filtered by `room_id`).
+
+## 25. `get_current_user` could 500 on malformed `sub` claim
+
+- **File:** `app/auth.py`, line 117
+- **Bug:** `int(payload["sub"])` raised `ValueError` if a valid-signature JWT contained a non-integer `sub` (e.g., `"abc"`). The spec requires any invalid token → 401, not 500.
+- **Fix:** Wrapped `int(payload["sub"])` in a `try`/`except (ValueError, TypeError)` that raises `AppError(401, ...)`.
+
 ---
 
 ## Verification

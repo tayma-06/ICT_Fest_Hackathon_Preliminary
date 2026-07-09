@@ -115,7 +115,11 @@ def get_current_user(
     payload: dict = Depends(get_token_payload),
     db: Session = Depends(get_db),
 ) -> User:
-    user = db.query(User).filter(User.id == int(payload["sub"])).first()
+    try:
+        user_id = int(payload["sub"])
+    except (ValueError, TypeError):
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")
     return user
