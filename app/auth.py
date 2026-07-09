@@ -27,6 +27,7 @@ _revoked_tokens: set[str] = set()
 _revocation_lock = threading.Lock()
 
 _PBKDF2_ROUNDS = 100_000
+_REQUIRED_TOKEN_CLAIMS = ["sub", "org", "role", "jti", "iat", "exp", "type"]
 
 
 def hash_password(password: str) -> str:
@@ -80,18 +81,25 @@ def create_refresh_token(user: User) -> str:
 
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            options={"require": _REQUIRED_TOKEN_CLAIMS},
+        )
     except jwt.PyJWTError:
         raise AppError(401, "UNAUTHORIZED", "Invalid or expired token")
 
 
 def revoke_access_token(payload: dict) -> None:
-    _revoked_tokens.add(payload["jti"])
+    jti = token_jti_from_payload(payload)
+    with _revocation_lock:
+        _revoked_tokens.add(jti)
 
 
 def consume_refresh_token(payload: dict) -> None:
     """Mark a refresh token's jti as used; reusing it raises 401."""
-    jti = payload.get("jti")
+    jti = token_jti_from_payload(payload)
     with _revocation_lock:
         if jti in _revoked_tokens:
             raise AppError(401, "UNAUTHORIZED", "Refresh token already used")
@@ -106,19 +114,36 @@ def get_token_payload(request: Request) -> dict:
     payload = decode_token(token)
     if payload.get("type") != "access":
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
-    if payload.get("jti") in _revoked_tokens:
+    jti = token_jti_from_payload(payload)
+    with _revocation_lock:
+        revoked = jti in _revoked_tokens
+    if revoked:
         raise AppError(401, "UNAUTHORIZED", "Token has been revoked")
     return payload
+
+
+def token_jti_from_payload(payload: dict) -> str:
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    return jti
+
+
+def user_id_from_payload(payload: dict) -> int:
+    sub = payload.get("sub")
+    if not isinstance(sub, str):
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    try:
+        return int(sub)
+    except ValueError:
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
 
 
 def get_current_user(
     payload: dict = Depends(get_token_payload),
     db: Session = Depends(get_db),
 ) -> User:
-    try:
-        user_id = int(payload["sub"])
-    except (ValueError, TypeError):
-        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    user_id = user_id_from_payload(payload)
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")

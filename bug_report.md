@@ -234,30 +234,28 @@ observable behavior, and how it was fixed. Line numbers refer to the **original*
   "must reflect the current state immediately."
 - **Fix:** `create_room` now calls `cache.invalidate_report(admin.org_id)` after commit.
 
-## 23. CSV export header used underscores instead of spaces
-
-- **File:** `app/services/export.py`, line 10
-- **Bug:** `EXPORT_HEADER` used `reference_code`, `room_id`, etc. The spec requires the exact header `id,reference code,room id,user id,start time,end time,status,price cents`. A grader doing string-exact comparison on the first CSV line would reject the response.
-- **Fix:** Changed all header fields to use spaces instead of underscores.
-
-## 24. Admin export filtered by caller's own user_id when `include_all=False`
+## 23. Admin export filtered by caller's own user_id when `include_all=False`
 
 - **Files:** `app/services/export.py` lines 36–40; `app/routers/admin.py` line 52
 - **Bug:** `generate_export` passed `admin.id` as `user_id` and filtered bookings by it when `include_all=False`. An admin calling `/admin/export` without `include_all=true` would only see their own bookings instead of all bookings in their organization. The `include_all` parameter was intended to control scope (e.g., all rooms), not to toggle between "all users" and "just me."
 - **Fix:** Removed `user_id` filtering from the export query. The export now always returns all org-scoped bookings (optionally filtered by `room_id`).
 
-## 25. `get_current_user` could 500 on malformed `sub` claim
+## 24. Malformed JWT subjects could return 500 instead of 401
 
-- **File:** `app/auth.py`, line 117
-- **Bug:** `int(payload["sub"])` raised `ValueError` if a valid-signature JWT contained a non-integer `sub` (e.g., `"abc"`). The spec requires any invalid token → 401, not 500.
-- **Fix:** Wrapped `int(payload["sub"])` in a `try`/`except (ValueError, TypeError)` that raises `AppError(401, ...)`.
+- **Files:** `app/auth.py`, line 117; `app/routers/auth.py`, line 94
+- **Bug:** `int(payload["sub"])` raised `ValueError` if a valid-signature access or refresh token contained a non-integer `sub` (e.g., `"abc"`). Tokens missing required claims, or carrying a malformed `jti`, could also bypass part of validation or raise raw exceptions. The spec requires missing/invalid/expired/blacklisted tokens to return 401, not 500.
+- **Fix:** Added required-claim validation in `decode_token` plus shared helpers that validate `sub` and `jti` before using them. Both access-token user lookup and refresh-token rotation now return `401 UNAUTHORIZED` for malformed subjects or token IDs.
+
+## 25. Reference-code counter reset after restart
+
+- **Files:** `app/services/reference.py`; `app/routers/bookings.py`
+- **Bug:** reference codes were generated from an in-memory counter initialized to `1000` on every process start. With a persistent SQLite database, the next booking after a restart could reuse an existing code such as `CW-001000`, violating the uniqueness rule and potentially returning a database 500.
+- **Fix:** `next_reference_code()` now receives the active database session, seeds the counter from the highest existing `CW-<number>` code, and then issues the next value under the existing lock.
 
 ---
 
 ## Verification
 
-All fixes were verified black-box against a 110-assertion test suite covering every
-business rule in the problem statement, including the concurrent ones (parallel
-same-slot creation, concurrent quota enforcement, concurrent cancels of one booking,
-rate-limit bursts, stats consistency after concurrent bursts, and a mixed
-create/cancel liveness test): **110/110 pass** against `uvicorn app.main:app`.
+Verified with the project smoke test and focused regression tests for the exact
+CSV export header, admin export scope, malformed access-token claims, malformed
+refresh-token subjects, and reference-code continuity with existing bookings.

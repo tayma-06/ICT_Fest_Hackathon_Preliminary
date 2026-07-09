@@ -118,7 +118,7 @@ def create_booking(
             start_time=start,
             end_time=end,
             status="confirmed",
-            reference_code=reference.next_reference_code(),
+            reference_code=reference.next_reference_code(db),
             price_cents=price_cents,
             created_at=now,
         )
