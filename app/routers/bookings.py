@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import cache
@@ -23,6 +24,7 @@ MIN_DURATION_HOURS = 1
 MAX_DURATION_HOURS = 8
 QUOTA_LIMIT = 3
 QUOTA_WINDOW_HOURS = 24
+REFERENCE_CODE_RETRIES = 5
 
 # Serializes booking creation and cancellation so conflict/quota checks and
 # status transitions stay correct under concurrent requests.
@@ -112,19 +114,29 @@ def create_booking(
         _check_quota(db, user.id, now, start)
 
         price_cents = room.hourly_rate_cents * duration_hours
-        booking = Booking(
-            room_id=room.id,
-            user_id=user.id,
-            start_time=start,
-            end_time=end,
-            status="confirmed",
-            reference_code=reference.next_reference_code(db),
-            price_cents=price_cents,
-            created_at=now,
-        )
-        db.add(booking)
-        db.commit()
-        db.refresh(booking)
+        booking = None
+        for _ in range(REFERENCE_CODE_RETRIES):
+            booking = Booking(
+                room_id=room.id,
+                user_id=user.id,
+                start_time=start,
+                end_time=end,
+                status="confirmed",
+                reference_code=reference.next_reference_code(db),
+                price_cents=price_cents,
+                created_at=now,
+            )
+            db.add(booking)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                booking = None
+                continue
+            db.refresh(booking)
+            break
+        if booking is None:
+            raise AppError(409, "ROOM_CONFLICT", "Could not allocate booking reference")
 
         stats.record_create(room.id, price_cents)
         cache.invalidate_availability(room.org_id, room.id, start.date().isoformat())
