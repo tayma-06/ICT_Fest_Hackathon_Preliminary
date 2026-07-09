@@ -18,8 +18,8 @@ def _settle_pause() -> None:
 
 
 def record_and_check(user_id: int) -> None:
-    now = time.monotonic()
     _settle_pause()
+    now = time.monotonic()
     with _buckets_lock:
         bucket = _buckets.get(user_id, [])
         bucket = [t for t in bucket if t > now - _WINDOW_SECONDS]

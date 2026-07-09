@@ -22,6 +22,5 @@ def log_refund(db: Session, booking: Booking, percent: int) -> RefundLog:
         processed_at=datetime.utcnow(),
     )
     db.add(entry)
-    db.commit()
-    db.refresh(entry)
+    db.flush()
     return entry
