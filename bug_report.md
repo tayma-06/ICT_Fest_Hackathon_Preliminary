@@ -256,6 +256,9 @@ observable behavior, and how it was fixed. Line numbers refer to the **original*
 
 ## Verification
 
-Verified with the project smoke test and focused regression tests for the exact
-CSV export header, admin export scope, malformed access-token claims, malformed
-refresh-token subjects, and reference-code continuity with existing bookings.
+Verified with the project smoke test, focused regression tests, and a 30-test
+live HTTP contract suite (`tests/test_contract_live.py`) that starts uvicorn on
+a fresh SQLite database and exercises all business rules, including concurrent
+double-booking, quota enforcement, rate limiting, concurrent cancellation,
+stats consistency, cache freshness, multi-tenancy, export scoping, and liveness.
+Full local run: `37 passed`.
