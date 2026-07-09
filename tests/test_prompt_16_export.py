@@ -146,7 +146,7 @@ def test_export_room_filter():
 
     start = _future(72)
     _book(admin_token, r1, start, _future(73))
-    _book(admin_token, r2, start + timedelta(hours=2).isoformat().replace("+00:00", ""), _future(75))
+    _book(admin_token, r2, _future(74), _future(75))
 
     csv_all = client.get("/admin/export", headers=_headers(admin_token)).text
     rows_all = list(csv.DictReader(io.StringIO(csv_all)))
