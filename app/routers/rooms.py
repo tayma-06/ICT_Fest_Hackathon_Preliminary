@@ -67,10 +67,10 @@ def availability(
 ):
     room = _get_org_room(db, room_id, user.org_id)
 
-    cached = cache.get_availability(room.id, date)
+    cached = cache.get_availability(room.org_id, room.id, date)
     if cached is not None:
         return cached
-    generation = cache.availability_generation(room.id, date)
+    generation = cache.availability_generation(room.org_id, room.id, date)
 
     try:
         day = datetime.strptime(date, "%Y-%m-%d").date()
@@ -98,7 +98,7 @@ def availability(
             for b in bookings
         ],
     }
-    cache.set_availability(room.id, date, result, generation)
+    cache.set_availability(room.org_id, room.id, date, result, generation)
     return result
 
 

@@ -36,25 +36,31 @@ def invalidate_report(org_id: int) -> None:
             _report_cache.pop(key, None)
 
 
-def get_availability(room_id: int, date: str):
+def _availability_key(org_id: int, room_id: int, date: str) -> tuple[int, int, str]:
+    return (org_id, room_id, date)
+
+
+def get_availability(org_id: int, room_id: int, date: str):
     with _cache_lock:
-        return _availability_cache.get((room_id, date))
+        return _availability_cache.get(_availability_key(org_id, room_id, date))
 
 
-def availability_generation(room_id: int, date: str) -> int:
+def availability_generation(org_id: int, room_id: int, date: str) -> int:
     with _cache_lock:
-        return _availability_generations.get((room_id, date), 0)
+        return _availability_generations.get(_availability_key(org_id, room_id, date), 0)
 
 
-def set_availability(room_id: int, date: str, value: dict, generation: int) -> None:
-    key = (room_id, date)
+def set_availability(
+    org_id: int, room_id: int, date: str, value: dict, generation: int
+) -> None:
+    key = _availability_key(org_id, room_id, date)
     with _cache_lock:
         if _availability_generations.get(key, 0) == generation:
             _availability_cache[key] = value
 
 
-def invalidate_availability(room_id: int, date: str) -> None:
-    key = (room_id, date)
+def invalidate_availability(org_id: int, room_id: int, date: str) -> None:
+    key = _availability_key(org_id, room_id, date)
     with _cache_lock:
         _availability_generations[key] = _availability_generations.get(key, 0) + 1
         _availability_cache.pop(key, None)

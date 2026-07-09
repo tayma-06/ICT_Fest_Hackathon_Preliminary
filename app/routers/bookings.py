@@ -127,7 +127,7 @@ def create_booking(
         db.refresh(booking)
 
         stats.record_create(room.id, price_cents)
-        cache.invalidate_availability(room.id, start.date().isoformat())
+        cache.invalidate_availability(room.org_id, room.id, start.date().isoformat())
         cache.invalidate_report(user.org_id)
 
     notifications.notify_created(booking)
@@ -226,7 +226,9 @@ def cancel_booking(
 
         stats.record_cancel(booking.room_id, booking.price_cents)
         cache.invalidate_report(user.org_id)
-        cache.invalidate_availability(booking.room_id, booking.start_time.date().isoformat())
+        cache.invalidate_availability(
+            user.org_id, booking.room_id, booking.start_time.date().isoformat()
+        )
 
     notifications.notify_cancelled(booking)
 
