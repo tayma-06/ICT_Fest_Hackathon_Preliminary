@@ -29,6 +29,8 @@ _revocation_lock = threading.Lock()
 
 _PBKDF2_ROUNDS = 100_000
 _REQUIRED_TOKEN_CLAIMS = ["sub", "org", "role", "jti", "iat", "exp", "type"]
+_TOKEN_TYPES = {"access", "refresh"}
+_ROLES = {"admin", "member"}
 
 
 def hash_password(password: str) -> str:
@@ -82,7 +84,7 @@ def create_refresh_token(user: User) -> str:
 
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             JWT_SECRET,
             algorithms=[JWT_ALGORITHM],
@@ -90,6 +92,27 @@ def decode_token(token: str) -> dict:
         )
     except jwt.PyJWTError:
         raise AppError(401, "UNAUTHORIZED", "Invalid or expired token")
+    validate_token_claims(payload)
+    return payload
+
+
+def validate_token_claims(payload: dict) -> None:
+    if not isinstance(payload.get("sub"), str):
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    if type(payload.get("org")) is not int:
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    role = payload.get("role")
+    if not isinstance(role, str) or role not in _ROLES:
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    if not isinstance(payload.get("jti"), str) or not payload.get("jti"):
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    if type(payload.get("iat")) is not int:
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    if type(payload.get("exp")) is not int:
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    token_type = payload.get("type")
+    if not isinstance(token_type, str) or token_type not in _TOKEN_TYPES:
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
 
 
 def revoke_access_token(payload: dict, db: Session) -> None:
