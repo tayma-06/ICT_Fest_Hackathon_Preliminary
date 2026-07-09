@@ -92,7 +92,7 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     if data.get("type") != "refresh":
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
     user_id = user_id_from_payload(data)
-    consume_refresh_token(data)
+    consume_refresh_token(data, db)
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")
@@ -104,6 +104,6 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/logout")
-def logout(payload: dict = Depends(get_token_payload)):
-    revoke_access_token(payload)
+def logout(payload: dict = Depends(get_token_payload), db: Session = Depends(get_db)):
+    revoke_access_token(payload, db)
     return {"status": "ok"}

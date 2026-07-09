@@ -252,6 +252,24 @@ observable behavior, and how it was fixed. Line numbers refer to the **original*
 - **Bug:** reference codes were generated from an in-memory counter initialized to `1000` on every process start. With a persistent SQLite database, the next booking after a restart could reuse an existing code such as `CW-001000`, violating the uniqueness rule and potentially returning a database 500.
 - **Fix:** `next_reference_code()` now receives the active database session, seeds the counter from the highest existing `CW-<number>` code, and then issues the next value under the existing lock.
 
+## 26. Room stats reset after server restart
+
+- **Files:** `app/services/stats.py`; `app/routers/rooms.py`
+- **Bug:** `/rooms/{id}/stats` returned values from an in-memory `_stats` dictionary. Bookings are persisted in SQLite, but `_stats` resets on process restart. After restart, a room with confirmed bookings could report `0` bookings and `0` revenue; cancelling one of those persisted bookings could also drive the in-memory revenue negative. Spec rule 14 says stats must always equal the values derivable from bookings.
+- **Fix:** The stats endpoint now derives the current count and revenue directly from confirmed `Booking` rows in the database. The incremental in-memory helper is still updated for compatibility, but the API response is database-backed and restart-safe.
+
+## 27. Logout and used refresh-token revocation were lost after restart
+
+- **Files:** `app/models.py`; `app/auth.py`; `app/routers/auth.py`
+- **Bug:** revoked access-token JTIs and consumed refresh-token JTIs lived only in the process-local `_revoked_tokens` set. Restarting the server cleared the set, so a logged-out access token worked again and a previously used refresh token could be reused. Spec rule 8 requires logout to invalidate the presented access token for all further use and refresh tokens to be single-use.
+- **Fix:** Added a `revoked_tokens` table and store revoked/consumed JTIs with their expiration. Access-token validation and refresh-token rotation now check both the in-memory set and the persisted table, so invalidation survives process restarts.
+
+## 28. Report and availability caches could store stale data after invalidation
+
+- **File:** `app/cache.py`, with callers in `app/routers/admin.py` and `app/routers/rooms.py`
+- **Bug:** cache reads, writes, and invalidations had no synchronization or version check. A slow report/availability request could compute old data, a booking mutation could invalidate the cache, and then the slow request could write the old result back into the cache after invalidation. Later reads would see stale data even though rules 12 and 13 require immediate freshness.
+- **Fix:** Added cache locks and per-key/per-org generation counters. Routes capture the generation before computing uncached data; `set_*` only writes if no invalidation has happened since that computation began.
+
 ---
 
 ## Verification
@@ -261,4 +279,5 @@ live HTTP contract suite (`tests/test_contract_live.py`) that starts uvicorn on
 a fresh SQLite database and exercises all business rules, including concurrent
 double-booking, quota enforcement, rate limiting, concurrent cancellation,
 stats consistency, cache freshness, multi-tenancy, export scoping, and liveness.
-Full local run: `37 passed`.
+Restart regressions additionally verify database-backed stats and persisted token
+revocation across process restarts. Full local run: `39 passed`.

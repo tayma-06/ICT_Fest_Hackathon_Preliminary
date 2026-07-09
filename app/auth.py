@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import (
@@ -18,7 +19,7 @@ from .config import (
 )
 from .database import get_db
 from .errors import AppError
-from .models import User
+from .models import RevokedToken, User
 
 # Access tokens presented to /auth/logout are recorded here so they can no
 # longer be used. Used refresh tokens are recorded here as well so each
@@ -91,22 +92,27 @@ def decode_token(token: str) -> dict:
         raise AppError(401, "UNAUTHORIZED", "Invalid or expired token")
 
 
-def revoke_access_token(payload: dict) -> None:
+def revoke_access_token(payload: dict, db: Session) -> None:
     jti = token_jti_from_payload(payload)
+    expires_at = token_expiry_from_payload(payload)
     with _revocation_lock:
         _revoked_tokens.add(jti)
+        _store_revoked_jti(db, jti, expires_at)
 
 
-def consume_refresh_token(payload: dict) -> None:
+def consume_refresh_token(payload: dict, db: Session) -> None:
     """Mark a refresh token's jti as used; reusing it raises 401."""
     jti = token_jti_from_payload(payload)
+    expires_at = token_expiry_from_payload(payload)
     with _revocation_lock:
-        if jti in _revoked_tokens:
+        if jti in _revoked_tokens or _is_revoked_jti(db, jti):
             raise AppError(401, "UNAUTHORIZED", "Refresh token already used")
         _revoked_tokens.add(jti)
+        if not _store_revoked_jti(db, jti, expires_at):
+            raise AppError(401, "UNAUTHORIZED", "Refresh token already used")
 
 
-def get_token_payload(request: Request) -> dict:
+def get_token_payload(request: Request, db: Session = Depends(get_db)) -> dict:
     header = request.headers.get("Authorization")
     if not header or not header.startswith("Bearer "):
         raise AppError(401, "UNAUTHORIZED", "Missing bearer token")
@@ -116,7 +122,7 @@ def get_token_payload(request: Request) -> dict:
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
     jti = token_jti_from_payload(payload)
     with _revocation_lock:
-        revoked = jti in _revoked_tokens
+        revoked = jti in _revoked_tokens or _is_revoked_jti(db, jti)
     if revoked:
         raise AppError(401, "UNAUTHORIZED", "Token has been revoked")
     return payload
@@ -127,6 +133,27 @@ def token_jti_from_payload(payload: dict) -> str:
     if not isinstance(jti, str) or not jti:
         raise AppError(401, "UNAUTHORIZED", "Invalid token")
     return jti
+
+
+def token_expiry_from_payload(payload: dict) -> datetime:
+    exp = payload.get("exp")
+    if not isinstance(exp, int):
+        raise AppError(401, "UNAUTHORIZED", "Invalid token")
+    return datetime.fromtimestamp(exp, timezone.utc).replace(tzinfo=None)
+
+
+def _is_revoked_jti(db: Session, jti: str) -> bool:
+    return db.query(RevokedToken).filter(RevokedToken.jti == jti).first() is not None
+
+
+def _store_revoked_jti(db: Session, jti: str, expires_at: datetime) -> bool:
+    db.add(RevokedToken(jti=jti, expires_at=expires_at))
+    try:
+        db.commit()
+        return True
+    except IntegrityError:
+        db.rollback()
+        return False
 
 
 def user_id_from_payload(payload: dict) -> int:

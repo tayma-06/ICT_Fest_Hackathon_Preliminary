@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi.testclient import TestClient
 
+from app import cache
 from app.auth import hash_password
 from app.config import JWT_ALGORITHM, JWT_SECRET
 from app.database import SessionLocal
@@ -197,3 +198,34 @@ def test_reference_code_continues_after_existing_database_values():
 
     code_number = int(booking.json()["reference_code"].split("-")[1])
     assert code_number > marker
+
+
+def test_cache_rejects_stale_set_after_invalidation():
+    org_id = uuid.uuid4().int
+    frm = "2026-01-01"
+    to = "2026-01-01"
+    stale_generation = cache.report_generation(org_id)
+
+    cache.invalidate_report(org_id)
+    cache.set_report(org_id, frm, to, {"stale": True}, stale_generation)
+
+    assert cache.get_report(org_id, frm, to) is None
+
+    fresh_generation = cache.report_generation(org_id)
+    fresh_report = {"fresh": True}
+    cache.set_report(org_id, frm, to, fresh_report, fresh_generation)
+    assert cache.get_report(org_id, frm, to) == fresh_report
+
+    room_id = uuid.uuid4().int
+    date = "2026-01-01"
+    stale_generation = cache.availability_generation(room_id, date)
+
+    cache.invalidate_availability(room_id, date)
+    cache.set_availability(room_id, date, {"stale": True}, stale_generation)
+
+    assert cache.get_availability(room_id, date) is None
+
+    fresh_generation = cache.availability_generation(room_id, date)
+    fresh_availability = {"fresh": True}
+    cache.set_availability(room_id, date, fresh_availability, fresh_generation)
+    assert cache.get_availability(room_id, date) == fresh_availability
