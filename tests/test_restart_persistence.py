@@ -122,13 +122,14 @@ def test_stats_and_token_revocations_survive_restart(tmp_path):
 
     proc = _start_server(db_path)
     try:
-        assert httpx.get(f"{BASE}/rooms", headers=headers, timeout=10.0).status_code == 401
+        r = httpx.get(f"{BASE}/rooms", headers=headers, timeout=10.0)
+        assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED"
         reused = httpx.post(
             f"{BASE}/auth/refresh",
             json={"refresh_token": refresh_token},
             timeout=10.0,
         )
-        assert reused.status_code == 401, reused.text
+        assert reused.status_code == 401 and reused.json()["code"] == "UNAUTHORIZED", reused.text
 
         logged_in = httpx.post(
             f"{BASE}/auth/login",

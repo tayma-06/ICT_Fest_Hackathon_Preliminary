@@ -220,10 +220,10 @@ def test_token_type_enforcement_and_bad_tokens():
     u = new_user(org, "admin")
     # refresh token used as access token -> 401
     r = client.get("/rooms", headers=H(u["refresh"]))
-    assert r.status_code == 401
+    assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED"
     # access token used at /auth/refresh -> 401
     r = client.post("/auth/refresh", json={"refresh_token": u["token"]})
-    assert r.status_code == 401
+    assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED"
     # garbage / missing token -> 401
     assert client.get("/rooms", headers=H("not.a.jwt")).status_code == 401
     assert client.get("/rooms").status_code == 401
@@ -237,7 +237,8 @@ def test_logout_blacklists_only_presented_token():
     assert client.get("/rooms", headers=H(tok1)).status_code == 200
 
     assert client.post("/auth/logout", headers=H(tok1)).status_code == 200
-    assert client.get("/rooms", headers=H(tok1)).status_code == 401  # revoked
+    r = client.get("/rooms", headers=H(tok1))
+    assert r.status_code == 401 and r.json()["code"] == "UNAUTHORIZED"  # revoked
     assert client.get("/rooms", headers=H(tok2)).status_code == 200  # untouched
 
 
@@ -251,7 +252,7 @@ def test_refresh_rotation_single_use():
     assert client.get("/rooms", headers=H(pair["access_token"])).status_code == 200
 
     reuse = client.post("/auth/refresh", json={"refresh_token": u["refresh"]})
-    assert reuse.status_code == 401  # single-use
+    assert reuse.status_code == 401 and reuse.json()["code"] == "UNAUTHORIZED"  # single-use
 
     second = client.post("/auth/refresh", json={"refresh_token": pair["refresh_token"]})
     assert second.status_code == 200  # rotated token works once
