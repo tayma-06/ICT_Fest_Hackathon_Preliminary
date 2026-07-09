@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session as SQLAlchemySession
 
 from app.database import SessionLocal
 from app.errors import AppError
@@ -391,22 +393,27 @@ def test_reference_code_collision_is_retried_safely(monkeypatch):
     room = _make_room(user["token"])
     start = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(hours=96)
     existing_code, retry_code = _unused_reference_pair()
-    _seed_booking(
-        room["id"],
-        user["user_id"],
-        start + timedelta(days=10),
-        start + timedelta(days=10, hours=1),
-        reference_code=existing_code,
-    )
     codes = iter([existing_code, retry_code])
     issued = []
+    original_commit = SQLAlchemySession.commit
 
     def forced_reference(_db):
         code = next(codes)
         issued.append(code)
         return code
 
+    def fail_first_reference_commit(session):
+        for obj in session.new:
+            if isinstance(obj, Booking) and obj.reference_code == existing_code:
+                raise IntegrityError(
+                    "INSERT INTO bookings",
+                    {},
+                    Exception("UNIQUE constraint failed: bookings.reference_code"),
+                )
+        return original_commit(session)
+
     monkeypatch.setattr(reference, "next_reference_code", forced_reference)
+    monkeypatch.setattr(SQLAlchemySession, "commit", fail_first_reference_commit)
 
     response = no_raise_client.post(
         "/bookings",
@@ -422,6 +429,17 @@ def test_reference_code_collision_is_retried_safely(monkeypatch):
     assert issued == [existing_code, retry_code]
     assert response.json()["reference_code"] == retry_code
     assert response.json()["reference_code"].startswith("CW-")
+
+
+def test_reference_code_has_database_uniqueness_guarantee():
+    column_is_unique = bool(Booking.__table__.c.reference_code.unique)
+    table_constraint_is_unique = any(
+        {column.name for column in constraint.columns} == {"reference_code"}
+        for constraint in Booking.__table__.constraints
+        if getattr(constraint, "unique", False)
+    )
+
+    assert column_is_unique or table_constraint_is_unique
 
 
 def test_reference_codes_stay_unique_under_concurrent_creation():
