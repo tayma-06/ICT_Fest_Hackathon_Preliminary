@@ -54,6 +54,7 @@ def create_room(
     db.add(room)
     db.commit()
     db.refresh(room)
+    cache.invalidate_report(admin.org_id)
     return _serialize_room(room)
 
 
