@@ -78,6 +78,25 @@ def _check_quota(db: Session, user_id: int, now: datetime, start: datetime) -> N
         raise AppError(409, "QUOTA_EXCEEDED", "Booking quota exceeded")
 
 
+def _integrity_message(exc: IntegrityError) -> str:
+    return f"{exc.orig} {exc.statement}".lower()
+
+
+def _is_reference_code_collision(exc: IntegrityError) -> bool:
+    message = _integrity_message(exc)
+    return "reference_code" in message and (
+        "unique" in message or "constraint" in message
+    )
+
+
+def _is_refund_log_collision(exc: IntegrityError) -> bool:
+    message = _integrity_message(exc)
+    return (
+        ("refund_logs.booking_id" in message or "uq_refund_logs_booking_id" in message)
+        and ("unique" in message or "constraint" in message)
+    )
+
+
 @router.post("/bookings", status_code=201)
 def create_booking(
     payload: BookingCreateRequest,
@@ -129,14 +148,20 @@ def create_booking(
             db.add(booking)
             try:
                 db.commit()
-            except IntegrityError:
+            except IntegrityError as exc:
                 db.rollback()
+                if not _is_reference_code_collision(exc):
+                    raise
                 booking = None
                 continue
             db.refresh(booking)
             break
         if booking is None:
-            raise AppError(409, "ROOM_CONFLICT", "Could not allocate booking reference")
+            raise AppError(
+                500,
+                "REFERENCE_CODE_GENERATION_FAILED",
+                "Could not allocate booking reference",
+            )
 
         stats.record_create(room.id, price_cents)
         cache.invalidate_availability(room.org_id, room.id, start.date().isoformat())
@@ -229,12 +254,26 @@ def cancel_booking(
         else:
             refund_percent = 0
 
+        _settlement_pause()
+        updated = (
+            db.query(Booking)
+            .filter(Booking.id == booking.id, Booking.status == "confirmed")
+            .update({"status": "cancelled"}, synchronize_session=False)
+        )
+        if updated != 1:
+            db.rollback()
+            raise AppError(409, "ALREADY_CANCELLED", "Booking already cancelled")
+
         entry = log_refund(db, booking, refund_percent)
         refund_amount_cents = entry.amount_cents
-
-        _settlement_pause()
-        booking.status = "cancelled"
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            if _is_refund_log_collision(exc):
+                raise AppError(409, "ALREADY_CANCELLED", "Booking already cancelled")
+            raise
+        db.refresh(booking)
 
         stats.record_cancel(booking.room_id, booking.price_cents)
         cache.invalidate_report(user.org_id)

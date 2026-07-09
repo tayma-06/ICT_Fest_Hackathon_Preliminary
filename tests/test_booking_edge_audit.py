@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as SQLAlchemySession
 
@@ -436,10 +437,18 @@ def test_reference_code_has_database_uniqueness_guarantee():
     table_constraint_is_unique = any(
         {column.name for column in constraint.columns} == {"reference_code"}
         for constraint in Booking.__table__.constraints
-        if getattr(constraint, "unique", False)
+        if isinstance(constraint, UniqueConstraint)
     )
 
     assert column_is_unique or table_constraint_is_unique
+
+
+def test_refund_log_has_booking_uniqueness_guarantee():
+    assert any(
+        {column.name for column in constraint.columns} == {"booking_id"}
+        for constraint in RefundLog.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    )
 
 
 def test_reference_codes_stay_unique_under_concurrent_creation():
